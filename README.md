@@ -32,11 +32,14 @@ go build -o adgo .
 # List all quick commands
 ./adgo quick --help
 
-# Run a quick query
-./adgo quick users --server 192.168.1.100 --username Administrator --password P@ssw0rd --baseDN DC=example,DC=com
+# Run a quick query for all users
+./adgo quick users --server 192.168.111.100 --username Administrator --password pass1234!@#$ --baseDN DC=sec,DC=lab
+
+# Check machine account quota
+./adgo quick machineAccountQuota --server 192.168.111.100 --username Administrator --password pass1234!@#$ --baseDN DC=sec,DC=lab
 
 # Run a custom query
-./adgo query --filter "(objectClass=user)" --attrs "sAMAccountName,userPrincipalName"
+./adgo query --filter "(objectClass=user)" --attrs "sAMAccountName,userPrincipalName" --server 192.168.111.100 --username Administrator --password pass1234!@#$ --baseDN DC=sec,DC=lab
 ```
 
 ### Command Categories
@@ -79,11 +82,11 @@ ADGO supports a configuration file for persistent settings. The config file is a
 
 ```yaml
 ldap:
-  server: "192.168.1.100"
+  server: "192.168.111.100"
   port: 389
-  baseDN: "DC=example,DC=com"
+  baseDN: "DC=sec,DC=lab"
   username: "Administrator"
-  password: "P@ssw0rd"
+  password: "<your-password-here>"
   security: 0
   loginName: "userPrincipalName"
 output: "text"
@@ -103,33 +106,47 @@ output: "text"
 
 ## Output Examples
 
-### Text Output
+### Text Output (Users Query)
 ```
-[+] Found 5 users
+  ADGO REPORT  |  Search Results
 
-CN: Administrator
-SAMAccountName: Administrator
-UserPrincipalName: Administrator@example.com
+--------------------------------------------------------------------------------
+[USER] CN=Administrator,CN=Users,DC=sec,DC=lab
+--------------------------------------------------------------------------------
+  [*] sAMAccountName       : Administrator
+  [*] userAccountControl   : 66048, Unknown
 
-CN: Guest
-SAMAccountName: Guest
-UserPrincipalName: Guest@example.com
+--------------------------------------------------------------------------------
+[USER] CN=Guest,CN=Users,DC=sec,DC=lab
+--------------------------------------------------------------------------------
+  [*] sAMAccountName       : Guest
+  [*] userAccountControl   : 66082, Guest
+
+--------------------------------------------------------------------------------
+[DC] CN=AD,OU=Domain Controllers,DC=sec,DC=lab
+--------------------------------------------------------------------------------
+  [*] sAMAccountName       : AD$
+  [*] userAccountControl   : 532480, Domain Controller
+
+--------------------------------------------------------------------------------
+[USER] CN=krbtgt,CN=Users,DC=sec,DC=lab
+--------------------------------------------------------------------------------
+  [*] sAMAccountName       : krbtgt
+  [*] userAccountControl   : 514, Krbtgt
+
+Total Entries: 8
 ```
 
-### JSON Output
-```json
-[
-  {
-    "cn": "Administrator",
-    "sAMAccountName": "Administrator",
-    "userPrincipalName": "Administrator@example.com"
-  },
-  {
-    "cn": "Guest",
-    "sAMAccountName": "Guest",
-    "userPrincipalName": "Guest@example.com"
-  }
-]
+### Text Output (Machine Account Quota)
+```
+  ADGO REPORT  |  Search Results
+
+--------------------------------------------------------------------------------
+[OTHER] DC=sec,DC=lab
+--------------------------------------------------------------------------------
+  [*] ms-DS-MachineAccountQuota : 10
+
+Total Entries: 1
 ```
 
 ## Contributing
