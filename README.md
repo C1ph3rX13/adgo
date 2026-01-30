@@ -1,6 +1,6 @@
 # ADGO
 
-Active Directory reconnaissance and triage tool for red team operators.
+Active Directory reconnaissance and triage tool for Red Team.
 
 ## Features
 
