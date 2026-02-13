@@ -6,8 +6,21 @@ import (
 	"unicode/utf8"
 )
 
-// isBinaryLikeString checks if the string contains non-printable characters
-// or is invalid UTF-8, indicating it might be binary data.
+// isBinaryLikeString checks if a string contains characteristics of binary data.
+// It detects non-printable characters and invalid UTF-8 sequences to determine if the string
+// should be treated as binary data rather than text.
+//
+// Parameters:
+//   - s: The string to analyze
+//
+// Returns:
+//   - true if the string appears to be binary data, false if it appears to be text
+//
+// The function checks for:
+//   - Invalid UTF-8 encoding
+//   - UTF-8 decode errors (RuneError)
+//   - Control characters (excluding tab, newline, carriage return)
+//   - DEL character (0x7F)
 func isBinaryLikeString(s string) bool {
 	if s == "" {
 		return false
@@ -32,7 +45,14 @@ func isBinaryLikeString(s string) bool {
 	return false
 }
 
-// attributeHexBytes converts raw bytes to a hex string with 0x prefix
+// attributeHexBytes converts raw bytes to a hexadecimal string with "0x" prefix.
+// This is used to display binary data that cannot be otherwise formatted.
+//
+// Parameters:
+//   - raw: The raw bytes to convert
+//
+// Returns:
+//   - A hexadecimal string representation with "0x" prefix (uppercase)
 func attributeHexBytes(raw []byte) string {
 	return "0x" + strings.ToUpper(hex.EncodeToString(raw))
 }

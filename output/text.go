@@ -1,176 +1,219 @@
 package output
 
 import (
-	"adgo/analyze"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
-	"github.com/fatih/color"
 	"github.com/go-ldap/ldap/v3"
 )
 
-type TextPrinter struct {
-	Config PrinterConfig
-	red    func(a ...interface{}) string
-	yellow func(a ...interface{}) string
-	blue   func(a ...interface{}) string
-	green  func(a ...interface{}) string
-	cyan   func(a ...interface{}) string
-	bold   func(a ...interface{}) string
-	dim    func(a ...interface{}) string
+// Text output formatting constants
+const (
+	// Card formatting
+	cardSeparatorWidth = 80  // Width of the separator line between cards
+	tableSeparator     = "=" // Separator character for summary tables
+
+	// Layout and sizing
+	defaultKeyLength = 20  // Default maximum key length for padding
+	maxKeyLength     = 50  // Maximum key length to consider for padding
+	maxLineWidth     = 120 // Maximum line width before wrapping
+	truncateLength   = 117 // Length at which to truncate and add "..."
+
+	// Output messages
+	msgNoEntries = "[INFO] No entries found"
+	reportTitle  = "ADGO REPORT"
+)
+
+// Statistics holds summary statistics about entries.
+type Statistics struct {
+	Total    int
+	Admins   int
+	SPN      int
+	ASRep    int
+	DCs      int
+	Enabled  int
+	Disabled int
 }
 
-func NewTextPrinter(config PrinterConfig) Printer {
-	if color.NoColor {
-		return &TextPrinter{
-			Config: config,
-			red:    fmt.Sprint,
-			yellow: fmt.Sprint,
-			blue:   fmt.Sprint,
-			green:  fmt.Sprint,
-			cyan:   fmt.Sprint,
-			bold:   fmt.Sprint,
-			dim:    fmt.Sprint,
-		}
-	}
+type textPrinter struct {
+	cfg    PrinterConfig
+	colors colorFunctions
+}
 
-	return &TextPrinter{
-		Config: config,
-		red:    color.New(color.FgRed).SprintFunc(),
-		yellow: color.New(color.FgYellow).SprintFunc(),
-		blue:   color.New(color.FgBlue).SprintFunc(),
-		green:  color.New(color.FgGreen).SprintFunc(),
-		cyan:   color.New(color.FgCyan).SprintFunc(),
-		bold:   color.New(color.Bold).SprintFunc(),
-		dim:    color.New(color.Faint).SprintFunc(),
+func newTextPrinter(cfg PrinterConfig) Printer {
+	return &textPrinter{
+		cfg:    cfg,
+		colors: initColors(),
 	}
 }
 
-func (p *TextPrinter) Print(entries []*ldap.Entry) error {
+// Print outputs LDAP entries in card-based text format.
+// Each entry is displayed as a separate card with attributes.
+func (p *textPrinter) Print(entries []*ldap.Entry) error {
 	if len(entries) == 0 {
-		fmt.Println("[INFO] No entries found")
+		fmt.Println(msgNoEntries)
 		return nil
 	}
-	return p.printCard(entries)
+	return p.printCards(entries)
 }
 
-func (p *TextPrinter) StreamPrint(entriesChan <-chan *ldap.Entry) error {
-	return p.streamCard(entriesChan)
+// StreamPrint outputs LDAP entries in card-based text format as they arrive.
+func (p *textPrinter) StreamPrint(entriesChan <-chan *ldap.Entry) error {
+	return p.streamCards(entriesChan)
 }
 
-func (p *TextPrinter) printCard(entries []*ldap.Entry) error {
-	p.printHeader("Search Results")
-	for _, entry := range entries {
-		p.printEntryCard(entry)
+// printCards prints multiple LDAP entry cards.
+func (p *textPrinter) printCards(entries []*ldap.Entry) error {
+	p.header("Search Results")
+
+	// Collect statistics
+	stats := collectStats(entries)
+
+	// Sort entries by value (high-value targets first)
+	sortedEntries := sortByValue(entries)
+
+	// Print cards
+	for _, entry := range sortedEntries {
+		p.card(entry)
 	}
-	p.printFooter(len(entries))
+
+	// Print statistics summary
+	p.printSummary(stats)
+
 	return nil
 }
 
-func (p *TextPrinter) streamCard(entriesChan <-chan *ldap.Entry) error {
-	p.printHeader("Search Results")
+func (p *textPrinter) streamCards(entriesChan <-chan *ldap.Entry) error {
+	p.header("Search Results")
+	var entries []*ldap.Entry
 	count := 0
 	for entry := range entriesChan {
 		if entry != nil {
-			p.printEntryCard(entry)
+			entries = append(entries, entry)
 			count++
 		}
 	}
-	p.printFooter(count)
+
+	// Collect statistics and sort
+	stats := collectStats(entries)
+	sortedEntries := sortByValue(entries)
+
+	// Print cards
+	for _, entry := range sortedEntries {
+		p.card(entry)
+	}
+
+	p.printSummary(stats)
 	return nil
 }
 
-func (p *TextPrinter) printEntryCard(entry *ldap.Entry) {
-	attrMap := p.buildAttrMap(entry)
-	objType := p.getObjectType(entry.DN)
+func (p *textPrinter) card(entry *ldap.Entry) {
+	attrs := p.toMap(entry)
+	objType := objectType(entry.DN)
 
-	separator := strings.Repeat("-", 80)
-	fmt.Printf("%s\n", separator)
-	fmt.Printf("%s\n", p.bold(fmt.Sprintf("[%s] %s", objType, entry.DN)))
-	fmt.Printf("%s\n", separator)
+	sep := strings.Repeat("-", cardSeparatorWidth)
+	fmt.Printf("%s\n%s\n%s\n", sep, p.colors.Bold(fmt.Sprintf("[%s] %s", objType, entry.DN)), sep)
 
-	var keys []string
-	var maxKeyLen int
-	for k := range attrMap {
-		if attrMap[k] != "" {
-			keys = append(keys, k)
-			if len(k) > maxKeyLen {
-				maxKeyLen = len(k)
-			}
-		}
-	}
-	sort.Strings(keys)
-
-	if maxKeyLen < 20 {
-		maxKeyLen = 20
-	}
-	if maxKeyLen > 50 {
-		maxKeyLen = 50
-	}
-
+	keys, maxLen := p.sortKeys(attrs)
 	for _, k := range keys {
-		val := attrMap[k]
-		if k == "whenCreated" || k == "whenChanged" {
-			val = p.formatTime(val)
-		}
-		if val != "" {
-			val = strings.ReplaceAll(val, "\r\n", " ")
-			val = strings.ReplaceAll(val, "\n", " ")
-			val = strings.ReplaceAll(val, "\r", " ")
-			val = strings.ReplaceAll(val, "\t", " ")
-		}
-
-		keyText := fmt.Sprintf("  [*] %s", k)
-		keyStr := p.cyan(keyText)
-		padding := strings.Repeat(" ", maxKeyLen-len(k))
-		valStr := val
-
-		if strings.Contains(k, "AllowedToDelegate") ||
-			strings.Contains(k, "AllowedToAct") ||
-			(k == "adminCount" && val == "1") ||
-			(k == "userAccountControl" && (strings.Contains(val, "Domain Controller") || strings.Contains(val, "Trust") || strings.Contains(val, "Krbtgt"))) {
-			valStr = p.red(val)
-		} else if k == "whenCreated" || k == "whenChanged" {
-			valStr = p.dim(val)
-		}
-
-		keyIndent := strings.Repeat(" ", len([]rune(keyText))+len(padding)+3)
-
-		if k == "nTSecurityDescriptor" || strings.HasPrefix(valStr, "Owner=") || strings.HasPrefix(valStr, "O:") {
-			for i, part := range wrapRunes(valStr, 120) {
-				if i == 0 {
-					fmt.Printf("%s%s : %s\n", keyStr, padding, part)
-					continue
-				}
-				fmt.Printf("%s%s\n", keyIndent, part)
-			}
-			continue
-		}
-
-		if len(valStr) > 120 {
-			valStr = valStr[:117] + "..."
-		}
-
-		fmt.Printf("%s%s : %s\n", keyStr, padding, valStr)
+		p.attr(k, attrs[k], maxLen)
 	}
 	fmt.Println()
 }
 
-func wrapRunes(s string, width int) []string {
-	if width <= 0 || s == "" {
-		return []string{s}
+// toMap converts an LDAP entry to a map of formatted attributes.
+// It uses the shared formatEntryAttributes function for consistency.
+func (p *textPrinter) toMap(entry *ldap.Entry) map[string]string {
+	return formatEntryAttributes(entry)
+}
+
+// sortKeys extracts and sorts attribute keys, calculating the maximum key length for padding.
+func (p *textPrinter) sortKeys(attrs map[string]string) ([]string, int) {
+	var keys []string
+	maxLen := defaultKeyLength
+	for k := range attrs {
+		keys = append(keys, k)
+		if len(k) > maxLen && len(k) <= maxKeyLength {
+			maxLen = len(k)
+		}
 	}
-	if !utf8.ValidString(s) {
+	sort.Strings(keys)
+	return keys, maxLen
+}
+
+// attr prints a single attribute with proper formatting and coloring.
+func (p *textPrinter) attr(name, val string, maxKeyLen int) {
+	// Note: Time formatting is already handled by analyze.FormatAttributeValue
+	val = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", " ").Replace(val)
+
+	keyText := fmt.Sprintf("  [*] %s", name)
+	keyStr := p.colors.Cyan(keyText)
+	padding := strings.Repeat(" ", maxKeyLen-len(name))
+
+	valStr := p.colorize(name, val)
+
+	if p.isMultiline(name, valStr) {
+		p.printMultiline(keyStr, padding, valStr, len(keyText)+maxKeyLen-len(name)+3)
+		return
+	}
+
+	if len(valStr) > maxLineWidth {
+		valStr = valStr[:truncateLength] + "..."
+	}
+	fmt.Printf("%s%s : %s\n", keyStr, padding, valStr)
+}
+
+// colorize applies color formatting to attribute values based on sensitivity and type.
+func (p *textPrinter) colorize(name, val string) string {
+	if p.isSensitive(name, val) {
+		return p.colors.Red(val)
+	}
+	if name == "whenCreated" || name == "whenChanged" {
+		return p.colors.Dim(val)
+	}
+	return val
+}
+
+// isSensitive checks if an attribute-value pair represents sensitive security information.
+func (p *textPrinter) isSensitive(name, val string) bool {
+	return strings.Contains(name, "AllowedToDelegate") ||
+		strings.Contains(name, "AllowedToAct") ||
+		(name == "adminCount" && val == "1") ||
+		(name == "userAccountControl" && (strings.Contains(val, "Domain Controller") ||
+			strings.Contains(val, "Trust") || strings.Contains(val, "Krbtgt")))
+}
+
+// isMultiline checks if an attribute value should be displayed in multiline format.
+func (p *textPrinter) isMultiline(name, val string) bool {
+	return name == "nTSecurityDescriptor" || strings.HasPrefix(val, "Owner=") || strings.HasPrefix(val, "O:")
+}
+
+// printMultiline prints a multi-line attribute value with proper indentation.
+func (p *textPrinter) printMultiline(keyStr, padding, val string, indentLen int) {
+	indent := strings.Repeat(" ", indentLen)
+	for i, part := range wrap(val, maxLineWidth) {
+		if i == 0 {
+			fmt.Printf("%s%s : %s\n", keyStr, padding, part)
+		} else {
+			fmt.Printf("%s%s\n", indent, part)
+		}
+	}
+}
+
+// wrap splits a string into multiple lines at the specified width.
+// It handles UTF-8 characters correctly and preserves word boundaries.
+func wrap(s string, width int) []string {
+	if width <= 0 || s == "" || !utf8.ValidString(s) {
 		return []string{s}
 	}
 	r := []rune(s)
 	if len(r) <= width {
 		return []string{s}
 	}
+
 	parts := make([]string, 0, (len(r)/width)+1)
 	for i := 0; i < len(r); i += width {
 		end := i + width
@@ -182,52 +225,38 @@ func wrapRunes(s string, width int) []string {
 	return parts
 }
 
-func (p *TextPrinter) printHeader(title string) {
-	fmt.Println()
-	fmt.Printf("  %s\n", p.cyan(fmt.Sprintf("ADGO REPORT  |  %s", title)))
-	fmt.Println()
+// header prints the report header with the specified title.
+func (p *textPrinter) header(title string) {
+	fmt.Printf("\n  %s\n\n", p.colors.Cyan(fmt.Sprintf("%s  |  %s", reportTitle, title)))
 }
 
-func (p *TextPrinter) printFooter(count int) {
-	fmt.Printf("Total Entries: %s\n", p.green(strconv.Itoa(count)))
+// footer prints the report footer with entry count.
+func (p *textPrinter) footer(count int) {
+	fmt.Printf("Total Entries: %s\n", p.colors.Green(strconv.Itoa(count)))
 }
 
-func (p *TextPrinter) buildAttrMap(entry *ldap.Entry) map[string]string {
-	attrMap := make(map[string]string)
-	for _, attr := range entry.Attributes {
-		parsedValue, err := analyze.FormatAttributeValue(entry, attr.Name)
-		if err == nil && parsedValue != "" {
-			attrMap[attr.Name] = parsedValue
-		} else {
-			attrMap[attr.Name] = ""
-		}
-	}
-	return attrMap
-}
+// printSummary prints the statistics summary at the end of card output.
+func (p *textPrinter) printSummary(stats Statistics) {
+	fmt.Printf("\n%s\n", p.colors.Dim(strings.Repeat(tableSeparator, 80)))
+	fmt.Printf("%s\n", p.colors.Bold("Summary:"))
 
-func (p *TextPrinter) getObjectType(dn string) string {
-	if strings.Contains(dn, "OU=Domain Controllers,") {
-		return "DC"
-	} else if strings.Contains(dn, "CN=Computers,") {
-		return "COMPUTER"
-	} else if strings.Contains(dn, "CN=Users,") || strings.Contains(dn, "OU=Users,") {
-		return "USER"
-	} else if strings.Contains(dn, "CN=Groups,") || strings.Contains(dn, "OU=Groups,") {
-		return "GROUP"
-	} else if strings.Contains(dn, "OU=") {
-		return "OU"
+	if stats.Admins > 0 {
+		fmt.Printf("  [%s] Admins: %s\n", p.colors.Red("!"), p.colors.Red(strconv.Itoa(stats.Admins)))
 	}
-	return "OTHER"
-}
+	if stats.SPN > 0 {
+		fmt.Printf("  [*] SPN Accounts: %s (Kerberoast targets)\n", p.colors.Green(strconv.Itoa(stats.SPN)))
+	}
+	if stats.ASRep > 0 {
+		fmt.Printf("  [*] AS-REP Roastable: %s\n", p.colors.Yellow(strconv.Itoa(stats.ASRep)))
+	}
+	if stats.DCs > 0 {
+		fmt.Printf("  [*] Domain Controllers: %s\n", p.colors.Yellow(strconv.Itoa(stats.DCs)))
+	}
 
-func (p *TextPrinter) formatTime(val string) string {
-	if val == "" {
-		return ""
-	}
-	layout := "20060102150405.0Z"
-	t, err := time.Parse(layout, val)
-	if err != nil {
-		return val
-	}
-	return t.Format("2006-01-02 15:04:05")
+	fmt.Printf("  Total: %s | Enabled: %s | Disabled: %s\n",
+		p.colors.Green(strconv.Itoa(stats.Total)),
+		p.colors.Green(strconv.Itoa(stats.Enabled)),
+		p.colors.Yellow(strconv.Itoa(stats.Disabled)),
+	)
+	fmt.Printf("%s\n\n", p.colors.Dim(strings.Repeat(tableSeparator, 80)))
 }

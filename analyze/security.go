@@ -8,9 +8,45 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
+// LDAP Security Modes
+const (
+	SecurityModeNone      = 0
+	SecurityModeTLS       = 1
+	SecurityModeStartTLS  = 2
+	SecurityModeInsecureTLS     = 3
+	SecurityModeInsecureStartTLS = 4
+)
+
+// securityModeNames maps security mode values to their string representations
+var securityModeNames = map[int]string{
+	SecurityModeNone:      "None",
+	SecurityModeTLS:       "TLS",
+	SecurityModeStartTLS:  "StartTLS",
+	SecurityModeInsecureTLS:     "InsecureTLS",
+	SecurityModeInsecureStartTLS: "InsecureStartTLS",
+}
+
+// SecurityModeName returns the string representation of a security mode.
+// Returns an error if the mode is invalid.
+func SecurityModeName(mode int) (string, error) {
+	name, ok := securityModeNames[mode]
+	if !ok {
+		return "", fmt.Errorf("invalid security mode: %d", mode)
+	}
+	return name, nil
+}
+
+// IsValidSecurityMode checks if the given security mode is valid.
+func IsValidSecurityMode(mode int) bool {
+	_, ok := securityModeNames[mode]
+	return ok
+}
+
+// encryptionType represents a single encryption type flag with its bit position and name.
+// This is used to decode the msDS-SupportedEncryptionTypes attribute value.
 type encryptionType struct {
-	bit  uint64
-	name string
+	bit  uint64 // Bit flag for this encryption type (power of 2)
+	name string // Human-readable name of the encryption type
 }
 
 // Pre-defined encryption types to avoid allocation on every call
@@ -87,7 +123,7 @@ func ParseRBCDBinary(data []byte) ([]string, error) {
 	// msDS-AllowedToActOnBehalfOfOtherIdentity binary structure:
 	// - Starts with 0x01 (Revision)
 	// - Followed by ACE structure containing SIDs
-	// This is a simplified parser that extracts SIDs from the binary data
+	// This is a simplified parser that extracts SIDs from binary data
 
 	var sids []string
 

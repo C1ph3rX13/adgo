@@ -29,12 +29,11 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
-// initializeConfig initializes and updates the configuration
-// cmd: Cobra command context for flag access
-// Returns: Error if any
+// initializeConfig initializes and updates the configuration based on the provided command.
+// It sets up viper, reads config files, binds flags, and triggers interactive setup if needed.
 func initializeConfig(cmd *cobra.Command) error {
 	// Initialize config (Set defaults, read config file)
-	if err := Init(); err != nil {
+	if err := InitConfig(); err != nil {
 		return fmt.Errorf("failed to initialize config: %w", err)
 	}
 
@@ -48,17 +47,13 @@ func initializeConfig(cmd *cobra.Command) error {
 	}
 
 	// Check if we need to trigger interactive setup
-	// Trigger if:
-	// 1. Server is missing (mandatory config)
-	// 2. We are not running help/version/init commands
-	// 3. Config file was not found
-	if Get().LDAP.Server == "" {
-		if GetConfigPath() == "" && cmd.Name() != "help" && cmd.Name() != "version" && cmd.Name() != "init" {
-			setup()
-			// Reload after interactive setup
-			if err := Reload(); err != nil {
-				return fmt.Errorf("failed to reload config after interactive setup: %w", err)
-			}
+	// Trigger if: Server is missing, config file not found, and not running help/version/init
+	if GetConfig().LDAP.Server == "" && GetConfigPath() == "" &&
+		cmd.Name() != "help" && cmd.Name() != "version" && cmd.Name() != "init" {
+		setup()
+		// Reload after interactive setup
+		if err := Reload(); err != nil {
+			return fmt.Errorf("failed to reload config after interactive setup: %w", err)
 		}
 	}
 
@@ -77,7 +72,7 @@ func init() {
 
 	rootCmd.PersistentFlags().StringP("password", "w", "", "Bind password")
 
-	rootCmd.PersistentFlags().StringP("output", "o", analyze.DefaultOutputFormat, "Output format (text, json, csv)")
+	rootCmd.PersistentFlags().StringP("output", "o", analyze.DefaultOutputFormat, "Output format (text, json, csv, bloodhound)")
 
 	// Bind flags to viper
 	BindFlags(rootCmd)

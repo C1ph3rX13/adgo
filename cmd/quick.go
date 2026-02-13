@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"adgo/log"
 	"adgo/queries"
 	"fmt"
 	"io"
@@ -21,84 +22,82 @@ const (
 	CategoryPermissions = "Permissions"
 )
 
-// commandCategoryMap maps query names to categories
-var commandCategoryMap = map[string]string{
-	"users":                       CategoryBasic,
-	"computers":                   CategoryBasic,
-	"dc":                          CategoryBasic,
-	"ou":                          CategoryBasic,
-	"spn":                         CategoryBasic,
-	"gpo":                         CategoryBasic,
-	"gpomachine":                  CategoryBasic,
-	"gpouser":                     CategoryBasic,
-	"trustDomain":                 CategoryBasic,
-	"trustattributes":             CategoryBasic,
-	"machineAccountQuota":         CategoryBasic,
-	"admin":                       CategoryAdmin,
-	"domainadmins":                CategoryAdmin,
-	"enterprise":                  CategoryAdmin,
-	"enterpriseadmins":            CategoryAdmin,
-	"schemaadmins":                CategoryAdmin,
-	"adminSDHolder":               CategoryAdmin,
-	"adminholders":                CategoryAdmin,
-	"sensitivegroups":             CategoryAdmin,
-	"disabled":                    CategoryAdmin,
-	"kerberoasting":               CategoryKerberos,
-	"asreproast":                  CategoryKerberos,
-	"delegate":                    CategoryDelegation,
-	"unconstraineddelegate":       CategoryDelegation,
-	"constraineddelegate":         CategoryDelegation,
-	"resourceconstraineddelegate": CategoryDelegation,
-	"caComputer":                  CategoryADCS,
-	"esc1":                        CategoryADCS,
-	"esc2":                        CategoryADCS,
-	"permissions":                 CategoryPermissions,
-	"highpriv":                    CategoryPermissions,
-	"group":                       CategoryPermissions,
-	"groupnested":                 CategoryPermissions,
-	"managedby":                   CategoryPermissions,
-	"acl":                         CategoryPermissions,
-	"sidhistory":                  CategoryPermissions,
+// CommandMetadata holds the metadata for a quick query command
+type CommandMetadata struct {
+	Name        string
+	Description string
+	Category    string
 }
 
-// commandDescriptionMap maps query names to descriptive short descriptions
-var commandDescriptionMap = map[string]string{
-	"users":                       "All user accounts",
-	"computers":                   "All computer accounts",
-	"dc":                          "All domain controllers",
-	"ou":                          "All organizational units",
-	"spn":                         "All service principal names",
-	"gpo":                         "All group policy objects",
-	"gpomachine":                  "GPOs with machine settings",
-	"gpouser":                     "GPOs with user settings",
-	"admin":                       "All admin accounts and groups",
-	"domainadmins":                "Domain admin group members",
-	"enterprise":                  "Enterprise related information",
-	"enterpriseadmins":            "Enterprise admin group members",
-	"schemaadmins":                "Schema admin group members",
-	"adminSDHolder":               "Accounts with AdminSDHolder protection",
-	"adminholders":                "Admin account holders",
-	"sensitivegroups":             "Sensitive AD groups",
-	"disabled":                    "Disabled user accounts",
-	"kerberoasting":               "Accounts vulnerable to Kerberoasting",
-	"asreproast":                  "Accounts vulnerable to AS-REP roasting",
-	"delegate":                    "Accounts with delegation rights",
-	"unconstraineddelegate":       "Accounts with unconstrained delegation",
-	"constraineddelegate":         "Accounts with constrained delegation",
-	"resourceconstraineddelegate": "Accounts with resource constrained delegation",
-	"caComputer":                  "Certificate authorities",
-	"esc1":                        "ESC1 vulnerable certificate templates",
-	"esc2":                        "ESC2 vulnerable certificate templates",
-	"permissions":                 "Account permissions",
-	"highpriv":                    "High privilege accounts",
-	"group":                       "Admin groups",
-	"groupnested":                 "Nested groups",
-	"managedby":                   "Objects with managedBy attribute",
-	"acl":                         "Objects with ACLs",
-	"sidhistory":                  "Accounts with SID history",
-	"trustDomain":                 "Trusted domains",
-	"trustattributes":             "Trusted domain attributes",
-	"machineAccountQuota":         "Machine account quota for the domain",
+// commandMetadata contains metadata for all predefined quick query commands
+var commandMetadata = []CommandMetadata{
+	// Basic Queries
+	{Name: "users", Description: "All user accounts", Category: CategoryBasic},
+	{Name: "computers", Description: "All computer accounts", Category: CategoryBasic},
+	{Name: "dc", Description: "All domain controllers", Category: CategoryBasic},
+	{Name: "ou", Description: "All organizational units", Category: CategoryBasic},
+	{Name: "spn", Description: "All service principal names", Category: CategoryBasic},
+	{Name: "gpo", Description: "All group policy objects", Category: CategoryBasic},
+	{Name: "gpomachine", Description: "GPOs with machine settings", Category: CategoryBasic},
+	{Name: "gpouser", Description: "GPOs with user settings", Category: CategoryBasic},
+	{Name: "trustDomain", Description: "Trusted domains", Category: CategoryBasic},
+	{Name: "trustattributes", Description: "Trusted domain attributes", Category: CategoryBasic},
+	{Name: "machineAccountQuota", Description: "Machine account quota for the domain", Category: CategoryBasic},
+
+	// Admin Queries
+	{Name: "admin", Description: "All admin accounts and groups", Category: CategoryAdmin},
+	{Name: "domainadmins", Description: "Domain admin group members", Category: CategoryAdmin},
+	{Name: "enterprise", Description: "Enterprise related information", Category: CategoryAdmin},
+	{Name: "enterpriseadmins", Description: "Enterprise admin group members", Category: CategoryAdmin},
+	{Name: "schemaadmins", Description: "Schema admin group members", Category: CategoryAdmin},
+	{Name: "adminSDHolder", Description: "Accounts with AdminSDHolder protection", Category: CategoryAdmin},
+	{Name: "adminholders", Description: "Admin account holders", Category: CategoryAdmin},
+	{Name: "sensitivegroups", Description: "Sensitive AD groups", Category: CategoryAdmin},
+	{Name: "disabled", Description: "Disabled user accounts", Category: CategoryAdmin},
+
+	// Kerberos Attacks
+	{Name: "kerberoasting", Description: "Accounts vulnerable to Kerberoasting", Category: CategoryKerberos},
+	{Name: "asreproast", Description: "Accounts vulnerable to AS-REP roasting", Category: CategoryKerberos},
+
+	// Delegation
+	{Name: "delegate", Description: "Accounts with delegation rights", Category: CategoryDelegation},
+	{Name: "unconstraineddelegate", Description: "Accounts with unconstrained delegation", Category: CategoryDelegation},
+	{Name: "constraineddelegate", Description: "Accounts with constrained delegation", Category: CategoryDelegation},
+	{Name: "resourceconstraineddelegate", Description: "Accounts with resource constrained delegation", Category: CategoryDelegation},
+
+	// AD CS
+	{Name: "caComputer", Description: "Certificate authorities", Category: CategoryADCS},
+	{Name: "esc1", Description: "ESC1 vulnerable certificate templates", Category: CategoryADCS},
+	{Name: "esc2", Description: "ESC2 vulnerable certificate templates", Category: CategoryADCS},
+
+	// Permissions
+	{Name: "permissions", Description: "Account permissions", Category: CategoryPermissions},
+	{Name: "highpriv", Description: "High privilege accounts", Category: CategoryPermissions},
+	{Name: "group", Description: "Admin groups", Category: CategoryPermissions},
+	{Name: "groupnested", Description: "Nested groups", Category: CategoryPermissions},
+	{Name: "managedby", Description: "Objects with managedBy attribute", Category: CategoryPermissions},
+	{Name: "acl", Description: "Objects with ACLs", Category: CategoryPermissions},
+	{Name: "sidhistory", Description: "Accounts with SID history", Category: CategoryPermissions},
+}
+
+// getCommandCategory returns the category for a given query name
+func getCommandCategory(queryName string) string {
+	for _, meta := range commandMetadata {
+		if meta.Name == queryName {
+			return meta.Category
+		}
+	}
+	return CategoryBasic // Default category
+}
+
+// getCommandDescription returns the description for a given query name
+func getCommandDescription(queryName string) string {
+	for _, meta := range commandMetadata {
+		if meta.Name == queryName {
+			return meta.Description
+		}
+	}
+	return fmt.Sprintf("Run query: %s", queryName) // Default description
 }
 
 // quickCmd represents the quick command group
@@ -128,17 +127,14 @@ func addQuickSubcommands() {
 		aliases := []string{name}
 
 		// Get description for this command
-		description := commandDescriptionMap[name]
-		if description == "" {
-			description = fmt.Sprintf("Run query: %s", name) // Default description
-		}
+		desc := getCommandDescription(name)
 
 		// Standard query command creation
 		cmd := &cobra.Command{
 			Use:     use,
 			Aliases: aliases,
-			Short:   description,
-			Long:    description,
+			Short:   desc,
+			Long:    desc,
 			Run: func(cmd *cobra.Command, args []string) {
 				standardQueryHandler(cmd)
 			},
@@ -198,10 +194,7 @@ func customQuickHelpFunc(cmd *cobra.Command, args []string) {
 		}
 
 		// Get category for this command
-		category := commandCategoryMap[queryName]
-		if category == "" {
-			category = CategoryBasic // Default category
-		}
+		category := getCommandCategory(queryName)
 
 		// Add command to category
 		categoryCommands[category] = append(categoryCommands[category], fmt.Sprintf("  %-30s %s", subcmd.Use, subcmd.Short))
@@ -233,67 +226,46 @@ func customQuickHelpFunc(cmd *cobra.Command, args []string) {
 	fmt.Fprintf(cmd.OutOrStdout(), "\nUse \"%s [command] --help\" for more information about a command.\n", cmd.CommandPath())
 }
 
-// simplifyCommandName generates a simplified command name from the query name
+// specialCaseNames maps query names to their simplified command names
+// Only contains truly exceptional cases that don't follow the standard rules.
+// Standard rules:
+//   - Pure acronyms (2-3 chars, all caps or lowercase) → uppercase
+//   - Underscore-separated → PascalCase
+//   - camelCase → Capitalize first letter
+var specialCaseNames = map[string]string{
+	// These are truly exceptional cases that don't follow the standard patterns
+	"asreproast":  "ASRepRoast",   // Capitalizes "Rep" which is non-standard
+	"cacomputer":  "CaComputer",   // Lowercase "a" instead of "A"
+	"gpomachine":  "GpoMachine",   // Lowercase "po" instead of "PO"
+	"gpouser":     "GpoUser",      // Lowercase "po" instead of "PO"
+}
+
+// pureAcronyms are uppercase-only command names (all caps, typically 2-3 chars)
+var pureAcronyms = map[string]bool{
+	"dc":      true,
+	"gpo":     true,
+	"spn":     true,
+	"ou":      true,
+	"acl":     true,
+	"esc1":    true,
+	"esc2":    true,
+}
+
+// simplifyCommandName generates a simplified command name from the query name.
+// Rules applied in order:
+// 1. Check special case mappings (for truly exceptional cases)
+// 2. Pure acronyms → UPPERCASE
+// 3. Underscore-separated → PascalCase (each part capitalized)
+// 4. camelCase/lowercase → Capitalize first letter
 func simplifyCommandName(name string) string {
 	// Handle special cases with direct mappings
-	switch name {
-	case "dc":
-		return "DC"
-	case "gpo":
-		return "GPO"
-	case "spn":
-		return "SPN"
-	case "ou":
-		return "OU"
-	case "acl":
-		return "ACL"
+	if simplified, ok := specialCaseNames[name]; ok {
+		return simplified
+	}
 
-	case "asreproast":
-		return "ASRepRoast"
-	case "kerberoasting":
-		return "Kerberoasting"
-	case "adminSDHolder":
-		return "AdminSDHolder"
-	case "machineAccountQuota":
-		return "MachineAccountQuota"
-	case "resourceconstraineddelegate":
-		return "ResourceConstrainedDelegate"
-	case "gpomachine":
-		return "GpoMachine"
-	case "gpouser":
-		return "GpoUser"
-	case "trustDomain":
-		return "TrustDomain"
-	case "trustattributes":
-		return "TrustAttributes"
-	case "adminholders":
-		return "AdminHolders"
-	case "domainadmins":
-		return "DomainAdmins"
-	case "enterpriseadmins":
-		return "EnterpriseAdmins"
-	case "schemaadmins":
-		return "SchemaAdmins"
-	case "sensitivegroups":
-		return "SensitiveGroups"
-	case "constraineddelegate":
-		return "ConstrainedDelegate"
-	case "unconstraineddelegate":
-		return "UnconstrainedDelegate"
-	case "cacomputer":
-		return "CaComputer"
-	case "esc1":
-		return "Esc1"
-	case "esc2":
-		return "Esc2"
-	case "groupnested":
-		return "GroupNested"
-	case "highpriv":
-		return "HighPriv"
-	case "managedby":
-		return "ManagedBy"
-	case "sidhistory":
-		return "SidHistory"
+	// Pure acronyms → UPPERCASE
+	if pureAcronyms[name] {
+		return strings.ToUpper(name)
 	}
 
 	// If name has underscores, capitalize each part
@@ -307,17 +279,12 @@ func simplifyCommandName(name string) string {
 		return strings.Join(parts, "")
 	}
 
-	// Handle camelCase and lowercase names
-	result := ""
-	for i, r := range name {
-		if i == 0 || (i > 0 && isUpper(r)) {
-			result += strings.ToUpper(string(r))
-		} else {
-			result += string(r)
-		}
+	// Handle camelCase and lowercase names - capitalize first letter
+	if len(name) > 0 {
+		return strings.ToUpper(name[:1]) + name[1:]
 	}
 
-	return result
+	return name
 }
 
 // isUpper checks if a rune is an uppercase letter
@@ -336,10 +303,12 @@ func standardQueryHandler(cmd *cobra.Command) {
 	// Get query definition
 	q, ok := queries.Get(queryName)
 	if !ok {
-		cmd.Printf("Error: Query '%s' not found\n", queryName)
+		log.Errorf("query '%s' not found", queryName)
 		return
 	}
 
 	// Execute common LDAP query logic
-	RunQuery(cmd, q.Filter, q.Attributes)
+	if err := RunQuery(cmd, q.Filter, q.Attributes); err != nil {
+		log.Error(err)
+	}
 }

@@ -7,7 +7,29 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
-// FormatAttributeValue retrieves and formats attribute values based on the attribute name
+// FormatAttributeValue retrieves and formats an LDAP attribute value based on the attribute name.
+// It delegates to specialized formatters for known attribute types to provide human-readable output.
+//
+// Parameters:
+//   - entry: The LDAP entry containing the attribute to format
+//   - attribute: The name of the attribute to format (should match constants in attributes.go)
+//
+// Returns:
+//   - The formatted string representation of the attribute value
+//   - An error if the attribute cannot be formatted or is invalid
+//
+// Supported specialized formatters:
+//   - ObjectClass: Multi-valued attribute, joined with commas
+//   - ObjectGUID: Binary GUID converted to string format
+//   - ObjectSID/mS-DS-CreatorSID: Binary SID converted to string format
+//   - Time attributes (whenCreated, whenChanged, etc.): GeneralizedTime conversion
+//   - FileTime attributes (lastLogon, pwdLastSet, etc.): Windows FileTime conversion
+//   - msDS-SupportedEncryptionTypes: Encryption types list
+//   - nTSecurityDescriptor: SDDL or summary format
+//   - userAccountControl: UAC flag parsing
+//   - accountExpires: Account expiration handling
+//
+// For unknown attributes, returns the raw string value or hex representation if binary-like.
 func FormatAttributeValue(entry *ldap.Entry, attribute string) (string, error) {
 	switch attribute {
 	case AttrObjectClass:
@@ -72,8 +94,17 @@ func FormatAttributeValue(entry *ldap.Entry, attribute string) (string, error) {
 	}
 }
 
-// FormatObjectClass retrieves and joins objectClass values
-// Note: LDAP objectClass is multi-valued, usually the last one is the most specific class.
+// FormatObjectClass retrieves and joins objectClass values.
+// The objectClass attribute is multi-valued; this function joins all values with commas.
+// Typically, the last value in the list is the most specific object class.
+//
+// Parameters:
+//   - entry: The LDAP entry containing the objectClass attribute
+//   - attribute: The attribute name (typically "objectClass")
+//
+// Returns:
+//   - A comma-separated string of all objectClass values
+//   - An error if no objectClass values are found
 func FormatObjectClass(entry *ldap.Entry, attribute string) (string, error) {
 	classes := entry.GetAttributeValues(attribute)
 

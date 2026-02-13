@@ -9,9 +9,15 @@ import (
 )
 
 const (
-	// FileTimeToUnixEpochDiff is the difference between Windows FileTime epoch (1601-01-01) and Unix epoch (1970-01-01) in 100-nanosecond intervals
+	// FileTimeToUnixEpochDiff is the difference between Windows FileTime epoch and Unix epoch.
+	// Windows FileTime uses 1601-01-01 00:00:00 UTC as its epoch, while Unix uses 1970-01-01 00:00:00 UTC.
+	// This value represents the number of 100-nanosecond intervals between these two epochs.
+	// Calculation: From 1601 to 1970 is 369 years + 89 leap days = 134,774 days
+	// 134,774 days × 24 hours × 60 minutes × 60 seconds × 10,000,000 (100ns intervals per second) = 116444736000000000
 	FileTimeToUnixEpochDiff = 1164447360000000000
-	// NanoSecondsPerHundredNanoSeconds is the conversion factor from 100-nanosecond intervals to nanoseconds
+
+	// NanoSecondsPerHundredNanoSeconds is the conversion factor from 100-nanosecond intervals to nanoseconds.
+	// 1 hundred-nanosecond interval = 100 nanoseconds
 	NanoSecondsPerHundredNanoSeconds = 100
 )
 

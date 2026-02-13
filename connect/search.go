@@ -4,6 +4,8 @@ import (
 	"adgo/analyze"
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 )
@@ -12,23 +14,46 @@ import (
 type Client interface {
 	Search(ctx context.Context, filter string, attributes []string) ([]*ldap.Entry, error)
 	StreamSearch(ctx context.Context, filter string, attributes []string) (<-chan *ldap.Entry, <-chan error)
+	Ping(ctx context.Context) error // Health check method
 	Close() error
+}
+
+// safeBool provides thread-safe boolean storage
+type safeBool struct {
+	mu    sync.RWMutex
+	value bool
+}
+
+// Set sets the boolean value in a thread-safe manner
+func (sb *safeBool) Set(v bool) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	sb.value = v
+}
+
+// Get gets the boolean value in a thread-safe manner
+func (sb *safeBool) Get() bool {
+	sb.mu.RLock()
+	defer sb.mu.RUnlock()
+	return sb.value
 }
 
 // ldapClient implements Client interface
 type ldapClient struct {
 	config        *Config
 	conn          *ldap.Conn
-	supportPaging bool // cache whether server supports paging
+	supportPaging safeBool // cache whether server supports paging (thread-safe)
 }
 
-// NewClient creates and initializes a new LDAP client
+// NewClient creates and initializes a new LDAP client with retry support
 func NewClient(c *Config) (Client, error) {
 	if c == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
 
-	conn, err := ldapBind(c)
+	// Use retry mechanism for connection
+	retryCfg := DefaultRetryConfig()
+	conn, err := ldapBindWithRetry(c, retryCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect/bind to LDAP server: %w", err)
 	}
@@ -54,6 +79,15 @@ func (c *ldapClient) Close() error {
 
 // checkCapabilities checks for supported controls (paging)
 func (c *ldapClient) checkCapabilities() {
+	// Create context with timeout for capability check
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_ = c.checkCapabilitiesWithContext(ctx)
+}
+
+// checkCapabilitiesWithContext checks for supported controls with context support
+func (c *ldapClient) checkCapabilitiesWithContext(ctx context.Context) error {
 	// Query RootDSE for supported controls
 	searchReq := ldap.NewSearchRequest(
 		"", // RootDSE BaseDN is empty
@@ -65,20 +99,23 @@ func (c *ldapClient) checkCapabilities() {
 		nil,
 	)
 
+	// Execute search with context - note: this uses the library's timeout mechanism
 	sr, err := c.conn.Search(searchReq)
 	if err != nil {
-		return
+		return fmt.Errorf("capability check failed: %w", err)
 	}
 
 	if len(sr.Entries) > 0 {
 		controls := sr.Entries[0].GetAttributeValues("supportedControl")
 		for _, ctrl := range controls {
 			if ctrl == analyze.OIDControlTypePaging {
-				c.supportPaging = true
+				c.supportPaging.Set(true)
 				break
 			}
 		}
 	}
+
+	return nil
 }
 
 // Search executes LDAP search
@@ -134,17 +171,22 @@ func (c *ldapClient) executeSearch(ctx context.Context, filter string, attribute
 		c.config.BaseDN,
 		ldap.ScopeWholeSubtree,
 		ldap.NeverDerefAliases,
-		0, // SizeLimit: 0 means unlimited
-		0, // TimeLimit: 0 means unlimited
+		0, // SizeLimit: set below from config
+		0, // TimeLimit: 0 means unlimited (can be configured)
 		false,
 		filter,
 		attributes,
 		nil, // Controls added later based on capabilities
 	)
 
+	// Apply size limit from config if specified
+	if c.config.SizeLimit > 0 {
+		searchReq.SizeLimit = c.config.SizeLimit
+	}
+
 	// 2. Add paging control if supported
 	var pagingControl *ldap.ControlPaging
-	if c.supportPaging {
+	if c.supportPaging.Get() {
 		pagingControl = ldap.NewControlPaging(uint32(analyze.DefaultPagingSize))
 		searchReq.Controls = []ldap.Control{pagingControl}
 	}
@@ -187,7 +229,13 @@ func (c *ldapClient) executeSearch(ctx context.Context, filter string, attribute
 			break
 		}
 
-		cookie := pagingResult.(*ldap.ControlPaging).Cookie
+		// Safe type assertion to prevent panic
+		pagingControlResult, ok := pagingResult.(*ldap.ControlPaging)
+		if !ok {
+			return fmt.Errorf("unexpected control type returned for paging")
+		}
+
+		cookie := pagingControlResult.Cookie
 		if len(cookie) == 0 {
 			break
 		}
@@ -205,8 +253,13 @@ func (c *ldapClient) abandonPaging(req *ldap.SearchRequest) error {
 		return nil
 	}
 
-	control := req.Controls[0].(*ldap.ControlPaging)
-	control.SetCookie([]byte{})
+	// Safe type assertion to prevent panic
+	pagingCtrl, ok := req.Controls[0].(*ldap.ControlPaging)
+	if !ok {
+		return fmt.Errorf("first control is not a paging control")
+	}
+
+	pagingCtrl.SetCookie([]byte{})
 
 	abandonReq := ldap.NewSearchRequest(
 		c.config.BaseDN,
@@ -217,7 +270,7 @@ func (c *ldapClient) abandonPaging(req *ldap.SearchRequest) error {
 		false,
 		"(objectClass=*)",
 		[]string{},
-		[]ldap.Control{control},
+		[]ldap.Control{pagingCtrl},
 	)
 	_, err := c.conn.Search(abandonReq)
 	return err

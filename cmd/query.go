@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"adgo/log"
+
 	"github.com/spf13/cobra"
 )
 
@@ -11,8 +13,16 @@ var queryCmd = &cobra.Command{
 	Long:  "Query executes a custom LDAP filter for targeted recon and returns the requested attributes.",
 	Run: func(cmd *cobra.Command, args []string) {
 		// Get flags
-		filter, _ := cmd.Flags().GetString("filter")
-		attrs, _ := cmd.Flags().GetStringSlice("attrs")
+		filter, err := cmd.Flags().GetString("filter")
+		if err != nil {
+			log.Error(err)
+			return
+		}
+		attrs, err := cmd.Flags().GetStringSlice("attrs")
+		if err != nil {
+			log.Error(err)
+			return
+		}
 
 		// Use default filter if none provided
 		if filter == "" {
@@ -20,7 +30,9 @@ var queryCmd = &cobra.Command{
 		}
 
 		// Execute common LDAP query logic
-		RunQuery(cmd, filter, attrs)
+		if err := RunQuery(cmd, filter, attrs); err != nil {
+			log.Error(err)
+		}
 	},
 }
 

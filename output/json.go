@@ -1,58 +1,51 @@
 package output
 
 import (
-	"adgo/analyze"
 	"bufio"
 	"encoding/json"
-	"io"
+	"fmt"
 	"os"
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
 )
 
-type JSONPrinter struct {
-	Config PrinterConfig
+// jsonPrinter outputs LDAP entries in JSON format.
+// It supports both batch printing and streaming with metadata.
+type jsonPrinter struct {
+	cfg PrinterConfig
 }
 
-func NewJSONPrinter(config PrinterConfig) Printer {
-	return &JSONPrinter{
-		Config: config,
-	}
+// newJSONPrinter creates a new JSON printer instance.
+func newJSONPrinter(cfg PrinterConfig) Printer {
+	return &jsonPrinter{cfg: cfg}
 }
 
+// jsonMeta contains metadata about the JSON output.
 type jsonMeta struct {
-	Version   string `json:"version"`
-	Timestamp string `json:"timestamp"`
+	Version   string `json:"version"`   // Output format version
+	Timestamp string `json:"timestamp"` // ISO 8601 timestamp of output generation
 }
 
+// jsonSummary contains summary statistics about the output.
 type jsonSummary struct {
-	Count int `json:"count"`
+	Count int `json:"count"` // Number of entries output
 }
 
+// jsonEntry represents a single LDAP entry in JSON format.
 type jsonEntry struct {
-	DN         string            `json:"dn"`
-	Attributes map[string]string `json:"attributes"`
+	DN         string            `json:"dn"`         // Distinguished Name of the entry
+	Attributes map[string]string `json:"attributes"` // Formatted attributes as key-value pairs
 }
 
-func (p *JSONPrinter) Print(entries []*ldap.Entry) error {
+// Print outputs LDAP entries in JSON format with metadata and summary.
+// The output includes version, timestamp, entries array, and count.
+func (p *jsonPrinter) Print(entries []*ldap.Entry) error {
 	data := make([]jsonEntry, 0, len(entries))
-
-	for _, entry := range entries {
-		attrMap := make(map[string]string)
-
-		for _, attr := range entry.Attributes {
-			parsedValue, err := analyze.FormatAttributeValue(entry, attr.Name)
-			if err == nil && parsedValue != "" {
-				attrMap[attr.Name] = parsedValue
-			} else {
-				attrMap[attr.Name] = ""
-			}
-		}
-
+	for _, e := range entries {
 		data = append(data, jsonEntry{
-			DN:         entry.DN,
-			Attributes: attrMap,
+			DN:         e.DN,
+			Attributes: p.toMap(e),
 		})
 	}
 
@@ -65,116 +58,86 @@ func (p *JSONPrinter) Print(entries []*ldap.Entry) error {
 			Version:   "1.0",
 			Timestamp: time.Now().Format(time.RFC3339),
 		},
-		Data: data,
-		Summary: jsonSummary{
-			Count: len(entries),
-		},
+		Data:    data,
+		Summary: jsonSummary{Count: len(entries)},
 	}
 
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(output)
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(output)
 }
 
-func writeString(w io.Writer, s string) error {
-	_, err := io.WriteString(w, s)
-	return err
-}
-
-func marshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
-	b, err := json.MarshalIndent(v, prefix, indent)
-	if err != nil {
-		return nil, err
-	}
-	return b, nil
-}
-
-func (p *JSONPrinter) StreamPrint(entriesChan <-chan *ldap.Entry) error {
+// StreamPrint writes LDAP entries to stdout in JSON format as they arrive.
+// It outputs a streaming JSON structure with metadata, entries array, and summary.
+func (p *jsonPrinter) StreamPrint(entriesChan <-chan *ldap.Entry) error {
 	w := bufio.NewWriter(os.Stdout)
 	defer w.Flush()
 
-	meta := jsonMeta{
+	m := jsonMeta{
 		Version:   "1.0",
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 
-	metaBytes, err := marshalIndent(meta, "  ", "  ")
-	if err != nil {
+	if _, err := w.WriteString("{\n  \"meta\": "); err != nil {
 		return err
 	}
-
-	if err := writeString(w, "{\n"); err != nil {
+	if err := p.write(w, m); err != nil {
 		return err
 	}
-	if err := writeString(w, `  "meta": `); err != nil {
-		return err
-	}
-	if _, err := w.Write(metaBytes); err != nil {
-		return err
-	}
-	if err := writeString(w, ",\n"); err != nil {
-		return err
-	}
-	if err := writeString(w, `  "data": [`+"\n"); err != nil {
+	if _, err := w.WriteString(",\n  \"data\": [\n"); err != nil {
 		return err
 	}
 
 	first := true
 	count := 0
-
-	for entry := range entriesChan {
-		if entry == nil {
+	for e := range entriesChan {
+		if e == nil {
 			continue
 		}
 		if !first {
-			os.Stdout.WriteString(",\n")
+			if _, err := w.WriteString(",\n"); err != nil {
+				return err
+			}
 		}
 		first = false
 		count++
 
-		attrMap := make(map[string]string)
-		for _, attr := range entry.Attributes {
-			parsedValue, err := analyze.FormatAttributeValue(entry, attr.Name)
-			if err == nil && parsedValue != "" {
-				attrMap[attr.Name] = parsedValue
-			} else {
-				attrMap[attr.Name] = ""
-			}
-		}
-
-		entryData := jsonEntry{
-			DN:         entry.DN,
-			Attributes: attrMap,
-		}
-
-		entryBytes, err := marshalIndent(entryData, "    ", "  ")
-		if err != nil {
+		if _, err := w.WriteString("    "); err != nil {
 			return err
 		}
-		if _, err := w.Write(entryBytes); err != nil {
+		if err := p.write(w, jsonEntry{
+			DN:         e.DN,
+			Attributes: p.toMap(e),
+		}); err != nil {
 			return err
 		}
 	}
 
-	if err := writeString(w, "\n  ],\n"); err != nil {
+	if _, err := w.WriteString("\n  ],\n  \"summary\": "); err != nil {
 		return err
 	}
-
-	summary := jsonSummary{Count: count}
-	summaryBytes, err := marshalIndent(summary, "  ", "  ")
-	if err != nil {
+	if err := p.write(w, jsonSummary{Count: count}); err != nil {
 		return err
 	}
-
-	if err := writeString(w, `  "summary": `); err != nil {
-		return err
-	}
-	if _, err := w.Write(summaryBytes); err != nil {
-		return err
-	}
-
-	if err := writeString(w, "}\n"); err != nil {
+	if _, err := w.WriteString("\n}\n"); err != nil {
 		return err
 	}
 	return w.Flush()
+}
+
+// toMap converts an LDAP entry to a map of formatted attributes.
+// It uses the shared formatEntryAttributes function for consistency.
+func (p *jsonPrinter) toMap(e *ldap.Entry) map[string]string {
+	return formatEntryAttributes(e)
+}
+
+// write marshals a value to JSON and writes it to the buffer.
+// Returns an error if marshaling or writing fails.
+func (p *jsonPrinter) write(w *bufio.Writer, v interface{}) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+	_, err = w.Write(b)
+	return err
 }
